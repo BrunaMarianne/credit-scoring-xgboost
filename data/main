@@ -1,0 +1,104 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import ks_2samp
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score, classification_report
+from xgboost import XGBClassifier
+import shap
+
+# 1. CARREGAMENTO DOS DADOS
+# Certifique-se de salvar o arquivo CSV na pasta data/ com este nome ou ajuste o caminho
+file_path = "data/default_of_credit_card_clients.csv"
+df = pd.read_csv(file_path)
+
+# Padronizar nomes de colunas: minúsculas e sem pontos/espaços
+df.columns = [c.lower().strip().replace(".", "_") for c in df.columns]
+
+# Identificar e renomear o target para 'target'
+target_col = [c for c in df.columns if "default" in c][0]
+df.rename(columns={target_col: "target"}, inplace=True)
+
+# Remover coluna ID (não deve ser usada como preditor)
+if "id" in df.columns:
+    df.drop(columns=["id"], inplace=True)
+
+# 2. FEATURE ENGINEERING ESPECÍFICA DE CRÉDITO
+# Taxas de utilização do limite em cada mês (Fatura / Limite)
+for i in range(1, 7):
+    bill = f"bill_amt{i}"
+    if bill in df.columns:
+        df[f"utilization_rate_{i}"] = df[bill] / (df["limit_bal"] + 1.0)
+
+# Proporção paga da fatura anterior (Pagamento / Fatura do mês anterior)
+# Evita divisão por zero somando 1.0
+for i in range(1, 6):
+    pay = f"pay_amt{i}"
+    bill_prev = f"bill_amt{i+1}"
+    if pay in df.columns and bill_prev in df.columns:
+        df[f"payment_ratio_{i}"] = df[pay] / np.maximum(df[bill_prev], 1.0)
+
+# Atraso máximo registrado no histórico (PAY_0, PAY_2, ..., PAY_6)
+pay_cols = [c for c in df.columns if c.startswith("pay_") and not c.startswith("pay_amt")]
+if pay_cols:
+    df["max_delay_months"] = df[pay_cols].max(axis=1)
+
+# 3. DIVISÃO ESTRATIFICADA (TREINO / TESTE)
+X = df.drop(columns=["target"])
+y = df["target"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.25, random_state=42, stratify=y
+)
+
+# Peso para equilibrar as classes (inadimplentes são minoria ~22%)
+scale_pos_weight = (len(y_train) - y_train.sum()) / y_train.sum()
+
+# 4. TREINAMENTO COM XGBOOST
+model = XGBClassifier(
+    n_estimators=350,
+    learning_rate=0.03,
+    max_depth=4,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    scale_pos_weight=scale_pos_weight,
+    random_state=42,
+    eval_metric="auc",
+    early_stopping_rounds=30
+)
+
+model.fit(
+    X_train, y_train,
+    eval_set=[(X_test, y_test)],
+    verbose=False
+)
+
+# 5. AVALIAÇÃO DE PERFORMANCE
+y_pred_proba = model.predict_proba(X_test)[:, 1]
+y_pred = (y_pred_proba >= 0.5).astype(int)
+
+auc = roc_auc_score(y_test, y_pred_proba)
+
+# Kolmogorov-Smirnov (KS)
+goods = y_pred_proba[y_test == 0]
+bads = y_pred_proba[y_test == 1]
+ks_stat, _ = ks_2samp(bads, goods)
+
+print("=" * 45)
+print(f"AUC-ROC Score : {auc:.4f}")
+print(f"Estatística KS: {ks_stat:.4f}")
+print("=" * 45)
+print("\nRelatório de Classificação:\n", classification_report(y_test, y_pred))
+
+# 6. EXPLICABILIDADE COM SHAP (Salva imagem para o README)
+print("\nCalculando valores SHAP...")
+explainer = shap.TreeExplainer(model)
+shap_values = explainer(X_test)
+
+plt.figure(figsize=(10, 6))
+shap.summary_plot(shap_values, X_test, show=False)
+plt.title("Fatores de Risco de Crédito - SHAP Summary", fontsize=13)
+plt.tight_layout()
+plt.savefig("shap_summary.png", dpi=300)
+print("Gráfico 'shap_summary.png' gerado com sucesso!")
