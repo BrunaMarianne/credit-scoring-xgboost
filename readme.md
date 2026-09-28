@@ -21,5 +21,5 @@ Os dados utilizados são referentes à base "Default of Credit Card Clients" (Ta
 Para reproduzir este projeto localmente:
 1. Faça o clone do repositório.
 2. Instale as dependências: `pip install -r requirements.txt`.
-3. Descarregue a base de dados original [inserir link do Kaggle/UCI] e guarde-a na pasta `data/` com o nome `default_credit_card_clients.csv`.
+3. Descarregue a base de dados original [Default of Credit Card Clients Dataset](https://www.kaggle.com/datasets/uciml/default-of-credit-card-clients-dataset?resource=download) e guarde-a na pasta `data/` com o nome `default_credit_card_clients.csv`.
 4. Execute as células do `main.ipynb`.
